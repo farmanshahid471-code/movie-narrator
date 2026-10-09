@@ -1,0 +1,63 @@
+name: run-bat-windows-check
+
+on:
+  push:
+    paths:
+      - run.bat
+      - .github/workflows/run-bat-windows-check.yml
+  pull_request:
+    paths:
+      - run.bat
+      - .github/workflows/run-bat-windows-check.yml
+  workflow_dispatch: {}
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      PY_PYTHON: "3.12"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Test the OLD run.bat from commit 42c4d2b (bug reproduction)
+        shell: cmd
+        run: |
+          git worktree add oldbat 42c4d2be9b1ba299f5c8c59478439358925caf29
+          cd oldbat
+          (echo 4& echo 4& echo 4& echo 4& echo 4) | call run.bat > ..\old-out.txt 2>&1
+          echo OLD-EXIT-CODE=%errorlevel% >> ..\old-out.txt
+          cd ..
+          type old-out.txt
+
+      - name: Test the NEW run.bat end to end
+        shell: cmd
+        run: |
+          (echo 4& echo 4& echo 4& echo 4& echo 4) | call run.bat > new-out.txt 2>&1
+          echo NEW-EXIT-CODE=%errorlevel% >> new-out.txt
+          type new-out.txt
+
+      - name: Assert the NEW run.bat is healthy
+        shell: pwsh
+        run: |
+          $o = Get-Content new-out.txt -Raw
+          $abortPatterns = @('was unexpected at this time', 'is not recognized as an internal or external command', 'syntax of the command is incorrect')
+          foreach ($p in $abortPatterns) {
+            if ($o -match [regex]::Escape($p)) { throw "NEW run.bat hit cmd abort: $p" }
+          }
+          $need = @('Setup complete', 'Python packages ready', 'ffmpeg ready', 'Subtitle font ready', 'Goodbye')
+          foreach ($n in $need) {
+            if ($o -notmatch [regex]::Escape($n)) { throw "NEW run.bat missing marker: $n" }
+          }
+          Write-Host "NEW run.bat: all assertions passed"
+
+      - name: Upload both logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bat-logs
+          path: |
+            old-out.txt
+            new-out.txt
