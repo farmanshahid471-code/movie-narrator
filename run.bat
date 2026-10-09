@@ -155,11 +155,12 @@ REM ================ subroutines ================
 
 :ensure_python
 set "PYEXE="
+set "PYV=0"
 for /f "delims=" %%I in ('where py 2^>nul') do if not defined PYEXE set "PYEXE=%%I"
 if not defined PYEXE for /f "delims=" %%I in ('where python3 2^>nul') do if not defined PYEXE set "PYEXE=%%I"
 if not defined PYEXE for /f "delims=" %%I in ('where python 2^>nul') do if not defined PYEXE set "PYEXE=%%I"
 if defined PYEXE call :check_python_version
-if defined PYV if %PYV% GEQ 310 goto python_ok
+if %PYV% GEQ 310 goto python_ok
 echo [*] No usable Python 3.10+ found - installing Python 3.12...
 winget install -e --id Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements >nul 2>&1
 set "PYEXE="
@@ -183,9 +184,7 @@ if not defined PYEXE set "FAIL_STEP=locating Python after install"
 if not defined PYEXE goto fail
 :python_found
 call :check_python_version
-if not defined PYV set "FAIL_STEP=Python version check, need 3.10 or newer"
-if not defined PYV goto fail
-if %PYV% LSS 310 set "FAIL_STEP=Python too old, need 3.10 or newer"
+if %PYV% LSS 310 set "FAIL_STEP=Python 3.10 or newer is required"
 if %PYV% LSS 310 goto fail
 :python_ok
 echo [OK] Python %PYMAJOR%.%PYMINOR% ready.
@@ -193,13 +192,12 @@ echo.
 goto :eof
 
 :check_python_version
-set "PYMAJOR="
-set "PYMINOR="
-set "PYV="
-for /f "tokens=1,2 delims=." %%A in ('"%PYEXE%" --version 2^>^&1 ^| findstr /r "^Python"') do (set "PYMAJOR=%%A" & set "PYMINOR=%%B")
-if not defined PYMAJOR goto :eof
-if not defined PYMINOR goto :eof
-set "PYMAJOR=%PYMAJOR:~-1%"
+set "PYMAJOR=0"
+set "PYMINOR=0"
+set "PYV=0"
+set "PYMAJRAW=0"
+for /f "tokens=1,2 delims=." %%A in ('call "%PYEXE%" --version 2^>^&1') do (set "PYMAJRAW=%%A" & set "PYMINOR=%%B")
+set "PYMAJOR=%PYMAJRAW:~-1%"
 set /a "PYV=%PYMAJOR%*100+%PYMINOR%" 2>nul
 goto :eof
 
