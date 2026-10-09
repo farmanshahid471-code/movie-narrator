@@ -41,6 +41,13 @@ jobs:
           echo NEW-EXIT-CODE=%errorlevel% >> new-out.txt
           type new-out.txt
 
+      - name: Test the NEW run.bat with echo tracing for exact abort line
+        shell: cmd
+        run: |
+          powershell -NoProfile -Command "(Get-Content run.bat) -replace '^@echo off$','@echo on' | Set-Content run-traced.bat"
+          (echo 4& echo 4& echo 4& echo 4& echo 4) | call run-traced.bat > traced-out.txt 2>&1
+          echo TRACED-EXIT-CODE=%errorlevel% >> traced-out.txt
+
       - name: Publish both logs as a PR comment
         if: always()
         shell: pwsh
@@ -55,7 +62,8 @@ jobs:
           }
           $old = Trim-Log "old-out.txt"
           $new = Trim-Log "new-out.txt"
-          $body = "## run.bat Windows smoke logs - run $env:GITHUB_RUN_NUMBER ($env:GITHUB_SHA)`n### OLD 42c4d2b output`n``````$old`n````n### NEW output`n``````$new`n`````n"
+          $traced = Trim-Log "traced-out.txt"
+          $body = "## run.bat Windows smoke logs - run $env:GITHUB_RUN_NUMBER ($env:GITHUB_SHA)`n### OLD 42c4d2b output`n``````$old`n````n### NEW output`n``````$new`n````n### TRACED NEW output (echo on, tail)`n``````$traced`n`````n"
           Set-Content -Path log-comment.md -Value $body
           gh pr comment 1 --body-file log-comment.md --repo $env:GITHUB_REPOSITORY
 

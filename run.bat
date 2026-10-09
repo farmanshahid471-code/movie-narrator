@@ -196,7 +196,7 @@ goto :eof
 set "PYMAJOR="
 set "PYMINOR="
 set "PYV="
-for /f "tokens=1,2 delims=." %%A in ('"%PYEXE%" --version 2^>^&1 ^| findstr /r "^Python"') do set "PYMAJOR=%%A" & set "PYMINOR=%%B"
+for /f "tokens=1,2 delims=." %%A in ('"%PYEXE%" --version 2^>^&1 ^| findstr /r "^Python"') do (set "PYMAJOR=%%A" & set "PYMINOR=%%B")
 if not defined PYMAJOR goto :eof
 if not defined PYMINOR goto :eof
 set "PYMAJOR=%PYMAJOR:~-1%"
