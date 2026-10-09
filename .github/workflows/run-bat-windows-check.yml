@@ -5,11 +5,12 @@ on:
     paths:
       - run.bat
       - .github/workflows/run-bat-windows-check.yml
-  pull_request:
-    paths:
-      - run.bat
-      - .github/workflows/run-bat-windows-check.yml
   workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
 
 jobs:
   smoke:
@@ -17,6 +18,7 @@ jobs:
     timeout-minutes: 45
     env:
       PY_PYTHON: "3.12"
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -39,6 +41,24 @@ jobs:
           echo NEW-EXIT-CODE=%errorlevel% >> new-out.txt
           type new-out.txt
 
+      - name: Publish both logs as a PR comment
+        if: always()
+        shell: pwsh
+        run: |
+          function Trim-Log($path) {
+            if (-not (Test-Path $path)) { return "(no file)" }
+            $t = Get-Content $path -Raw
+            if ($t.Length -gt 12000) {
+              return $t.Substring(0, 4000) + "`n...[middle cut]...`n" + $t.Substring($t.Length - 7500)
+            }
+            return $t
+          }
+          $old = Trim-Log "old-out.txt"
+          $new = Trim-Log "new-out.txt"
+          $body = "## run.bat Windows smoke logs - run $env:GITHUB_RUN_NUMBER ($env:GITHUB_SHA)`n### OLD 42c4d2b output`n``````$old`n````n### NEW output`n``````$new`n`````n"
+          Set-Content -Path log-comment.md -Value $body
+          gh pr comment 1 --body-file log-comment.md --repo $env:GITHUB_REPOSITORY
+
       - name: Assert the NEW run.bat is healthy
         shell: pwsh
         run: |
@@ -52,12 +72,3 @@ jobs:
             if ($o -notmatch [regex]::Escape($n)) { throw "NEW run.bat missing marker: $n" }
           }
           Write-Host "NEW run.bat: all assertions passed"
-
-      - name: Upload both logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: bat-logs
-          path: |
-            old-out.txt
-            new-out.txt
