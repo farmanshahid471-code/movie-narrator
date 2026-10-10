@@ -86,15 +86,17 @@ set /p "MOVIE=Movie name, required: "
 if not defined MOVIE echo Movie name is required - going back to the menu.
 if not defined MOVIE pause
 if not defined MOVIE goto menu
-set "DUR=60"
-set /p "DUR=Target duration in seconds, Enter for 60: "
+set "DUR=600"
+set /p "DUR=Target duration in seconds, 600-1200 = 10-20 min, Enter for 600: "
 set "FMT=16:9"
 set /p "FMT=Video format, 16:9 or 9:16, Enter for 16:9: "
+set "LANGV=en"
+set /p "LANGV=Narration language, en or zh, Enter for en: "
 set "STYLE="
 set /p "STYLE=Narration style in any words, Enter for default: "
 set "VID="
 set /p "VID=Path to your source movie file, Enter to skip: "
-set "ARGS=--movie "%MOVIE%" --duration %DUR% --format %FMT%"
+set "ARGS=--movie "%MOVIE%" --duration %DUR% --format %FMT% --lang %LANGV%"
 if not "%STYLE%"=="" set "ARGS=%ARGS% --style "%STYLE%""
 if not "%VID%"=="" set "ARGS=%ARGS% --video "%VID%""
 echo.

@@ -31,6 +31,7 @@ from .options import (
     DryRunOpt,
     DurationOpt,
     KeepCacheOpt,
+    LangOpt,
     LibraryDirOpt,
     MovieOpt,
     MovieRequired,
@@ -148,6 +149,8 @@ def create(
 
     narration_preset: NarrationPresetOpt = None,
 
+    lang: LangOpt = None,
+
     output_dir: OutputDirCreate = None,
 
 
@@ -219,6 +222,7 @@ def create(
         subtitle_lang=subtitle_lang,
         subtitle_mode=subtitle_mode,
         narration_preset=narration_preset,
+        lang=lang,
         output_dir=output_dir,
         narrator_perspective=narrator_perspective,
         focus_character=focus_character,

@@ -22,6 +22,7 @@ from movie_narrator.cli.options import (
     DryRunOpt,
     DurationOpt,
     KeepCacheOpt,
+    LangOpt,
     LibraryDirOpt,
     MovieOpt,
     NarrationPresetOpt,
@@ -81,6 +82,8 @@ def create(
     subtitle_mode: SubtitleModeOpt = None,
 
     narration_preset: NarrationPresetOpt = None,
+
+    lang: LangOpt = None,
 
     output_dir: OutputDirCreate = None,
 
@@ -192,6 +195,7 @@ def create(
         "narration_preset": narration_preset,
         "narrator_perspective": narrator_perspective,
         "focus_character": focus_character,
+        "lang": lang,
     }
     resolved = merge_job(cli_snapshot, job, get_settings())
 

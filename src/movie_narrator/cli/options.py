@@ -45,6 +45,16 @@ DurationOpt = Annotated[
     typer.Option("--duration", "-d", help="目标时长(秒) / Target duration (seconds)"),
 ]
 
+# --lang: narration language (exposes the engine's existing lang parameter).
+LangOpt = Annotated[
+    Optional[str],
+    typer.Option(
+        "--lang",
+        help="旁白语言 zh | en | ja | ko | es | fr | de / Narration language; "
+        "empty = zh (or job.yaml lang)",
+    ),
+]
+
 # --voice / -v: two intentional help variants (create/race mention Edge TTS).
 VoiceWithSign = Annotated[
     Optional[str],
