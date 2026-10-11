@@ -229,13 +229,13 @@ echo [*] Installing the web UI package...
 "%PY%" -m pip install "%WEBUI_PKG%"
 if errorlevel 1 set "FAIL_STEP=installing movie-narrator-web"
 if errorlevel 1 goto fail
-echo [*] Applying the engine-1.7.0 compatibility patch to the web UI...
-"%PY%" -c "import re; from pathlib import Path; p = Path(r'%VENV%/Lib/site-packages/movie_narrator_web/form.py'); s = p.read_text(encoding='utf-8'); s2 = re.sub(r'(?m)^(\s*)format=data\.format', r'\1video_format=data.format', s); p.write_text(s2, encoding='utf-8'); raise SystemExit(0 if 'video_format=data.format' in s2 else 1)"
-if errorlevel 1 set "FAIL_STEP=patching movie-narrator-web form.py"
-if errorlevel 1 goto fail
-echo [OK] Web UI patch applied.
 type nul > "%VENV%\.mn-packages-ok"
 :packages_ok
+echo [*] Applying web UI compatibility patches (safe to re-run)...
+"%PY%" -c "import sys;from pathlib import Path;import movie_narrator_web as w;b=Path(w.__file__).parent;ok=True;p=b/'form.py';s=p.read_text(encoding='utf-8');s2=chr(10).join('        video_format=data.format,' if L.strip()=='format=data.format,' else L for L in s.split(chr(10)));p.write_text(s2,encoding='utf-8') if s2!=s else None;ok=ok and 'video_format=data.format' in p.read_text(encoding='utf-8');p=b/'server.py';s=p.read_text(encoding='utf-8');t=s.replace('from fastapi import FastAPI','from fastapi import FastAPI, WebSocket').replace('async def ws_endpoint(websocket, task_id: str):','async def ws_endpoint(websocket: WebSocket, task_id: str):');p.write_text(t,encoding='utf-8') if t!=s else None;ok=ok and 'websocket: WebSocket' in p.read_text(encoding='utf-8');js=sorted((b/'static'/'assets').glob('index-*.js'));p=js[0] if js else None;ok=ok and p is not None;s=p.read_text(encoding='utf-8') if p else '';t=s.replace('min:30,max:300,step:5','min:30,max:1800,step:30').replace('children:`300s`','children:`30m`');p.write_text(t,encoding='utf-8') if p is not None and t!=s else None;ok=ok and 'max:1800' in (p.read_text(encoding='utf-8') if p is not None else '');sys.exit(0 if ok else 1)"
+if errorlevel 1 set "FAIL_STEP=patching movie-narrator-web"
+if errorlevel 1 goto fail
+echo [OK] Web UI patches applied.
 echo [OK] Python packages ready.
 echo.
 goto :eof
@@ -301,3 +301,5 @@ echo [i] .env already exists - keeping your current settings.
 :env_done
 echo.
 goto :eof
+
+
