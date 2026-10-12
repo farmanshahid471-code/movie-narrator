@@ -17,6 +17,7 @@ get_llm_client() as llm:`` raises :class:`CircuitOpenError` (retryable)
 without creating a client or touching the network.
 """
 
+import json
 from dataclasses import dataclass
 from contextlib import contextmanager
 from typing import Iterator
@@ -129,6 +130,33 @@ def _wrap_llm_retry(client: OpenAI) -> OpenAI:
     return client
 
 
+def _wrap_llm_extra_body(client: OpenAI, extra_body_json: str) -> OpenAI:
+    """Merge an optional JSON object into every chat-completions request.
+
+    ``extra_body_json`` comes from ``settings.llm_extra_body`` (the
+    ``MN_LLM_EXTRA_BODY`` env var) and is injected through the OpenAI
+    SDK's ``extra_body`` parameter, e.g. ``{"thinking": {"type":
+    "disabled"}}`` for DeepSeek V4 models whose reasoning mode is on by
+    default. When the setting is empty — the default — the client is
+    returned untouched and no request gains any new field, so existing
+    deployments behave exactly as before. Values a caller passes via its
+    own ``extra_body`` keyword win over the merged defaults.
+    """
+    extra = json.loads(extra_body_json) if extra_body_json.strip() else {}
+    if not extra:
+        return client
+    if not isinstance(extra, dict):
+        raise ValueError("MN_LLM_EXTRA_BODY must be a JSON object")
+    original_create = client.chat.completions.create
+
+    def _create_with_extra_body(*args, **kwargs):
+        kwargs["extra_body"] = {**extra, **(kwargs.get("extra_body") or {})}
+        return original_create(*args, **kwargs)
+
+    client.chat.completions.create = _create_with_extra_body
+    return client
+
+
 # ── Built-in "openai" provider ───────────────────────────
 
 
@@ -152,7 +180,9 @@ def _make_openai_llm():
                 http_client=http_client,
                 max_retries=0,  # the shared RetryPolicy is the single retry source
             )
-            yield LLMClient(client=_wrap_llm_retry(client), model=settings.llm_model)
+            client = _wrap_llm_retry(client)
+            client = _wrap_llm_extra_body(client, settings.llm_extra_body)
+            yield LLMClient(client=client, model=settings.llm_model)
         finally:
             http_client.close()
 

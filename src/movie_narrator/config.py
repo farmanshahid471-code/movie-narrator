@@ -188,6 +188,13 @@ class Settings(BaseSettings):
     llm_api_key: str = "ollama"
     llm_model: str = "qwen2.5:7b"
     llm_timeout: int = 60
+    # Optional JSON object merged into every chat-completions request body
+    # via the OpenAI SDK's ``extra_body`` (e.g. ``{"thinking":
+    # {"type": "disabled"}}`` to switch off DeepSeek V4's default reasoning
+    # mode, which otherwise delays non-streaming responses by the full
+    # reasoning time and burns the max_tokens budget). Empty string (the
+    # default) adds nothing to the request, so behaviour is unchanged.
+    llm_extra_body: str = ""
     script_temperature: float = 0.7
     script_expand_temperature: float = 0.5
     script_max_tokens: int = 2048

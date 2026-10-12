@@ -28,6 +28,9 @@ output/
 !assets/*.mp3
 !assets/fonts/*
 
+# Local tooling downloaded by run.bat (ffmpeg static build)
+tools/
+
 # IDE
 .vscode/
 .idea/
