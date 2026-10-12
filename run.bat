@@ -292,15 +292,21 @@ if not defined DS_KEY set "DS_KEY=PUT-YOUR-DEEPSEEK-API-KEY-HERE"
 >> ".env" echo MN_LLM_API_KEY=%DS_KEY%
 >> ".env" echo MN_LLM_MODEL=%DS_MODEL%
 >> ".env" echo MN_DEFAULT_VOICE=%DS_VOICE%
+>> ".env" echo # V4 models think by default; disabling makes non-streaming replies return fast.
+>> ".env" echo MN_LLM_EXTRA_BODY={"thinking":{"type":"disabled"}}
+>> ".env" echo # Generous timeout so long recap scripts never get cut off.
+>> ".env" echo MN_LLM_TIMEOUT=600
 >> ".env" echo # TTS provider edge is free and needs no key, personal use only.
 >> ".env" echo # For commercial use set MN_TTS_PROVIDER=openai or mimo.
 echo [OK] .env written for model %DS_MODEL%
 goto env_done
 :env_ok
 echo [i] .env already exists - keeping your current settings.
+"%PY%" -c "from pathlib import Path;p=Path('.env');s=p.read_text(encoding='utf-8');q=chr(34);eb='{'+q+'thinking'+q+':{'+q+'type'+q+':'+q+'disabled'+q+'}}';add=[];add.append('MN_LLM_TIMEOUT=600') if 'MN_LLM_TIMEOUT' not in s else None;add.append('MN_LLM_EXTRA_BODY='+eb) if 'MN_LLM_EXTRA_BODY' not in s and 'deepseek' in s.lower() else None;p.open('a',encoding='utf-8').write(chr(10)+chr(10).join(add)+chr(10)) if add else None;msg=('[OK] .env LLM tuning added: '+' , '.join(add)) if add else '[i] .env LLM tuning already present';print(msg)"
 :env_done
 echo.
 goto :eof
+
 
 
 
