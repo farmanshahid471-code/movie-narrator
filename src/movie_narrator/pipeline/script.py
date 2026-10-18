@@ -269,10 +269,10 @@ def _generate_plot_beats(ctx: Context, settings, llm, target_count: int) -> List
         language_hint=build_language_hint(ctx.metadata.get("lang", "")),
     )
 
-    # ST-09: Scale max_tokens by target_count to avoid truncation on
-    # high-segment presets (e.g. douyin 120s → n=36). Each beat needs
-    # ~60 tokens; floor at the configured research_max_tokens.
-    scaled_max_tokens = max(settings.research_max_tokens, target_count * 60)
+    # Structured beats include text plus act, ratio, rhythm and emotion.
+    # The old 60-token estimate covered plain strings, not these objects,
+    # and clipped long-video outlines before their closing JSON brackets.
+    scaled_max_tokens = max(settings.research_max_tokens, target_count * 160)
 
     # v1.3.2: opt-in prompt cache around the raw Phase 1 completion.
     # ``target_count`` is folded into the key via ``extra`` — without it
@@ -285,7 +285,7 @@ def _generate_plot_beats(ctx: Context, settings, llm, target_count: int) -> List
         language=str(ctx.metadata.get("lang", "")),
         model=str(llm.model),
         provider=str(getattr(settings, "llm_provider", "")),
-        extra={"target_count": int(target_count)},
+        extra={"target_count": int(target_count), "structured_beats_version": 2},
     )
     cached = cache.lookup(key)
     if cached is not None:
@@ -307,14 +307,14 @@ def _generate_plot_beats(ctx: Context, settings, llm, target_count: int) -> List
         ):
             ctx.cost_tracker.record_llm_call("script", llm.model, response.usage.model_dump())
         raw = response.choices[0].message.content or ""
-        cache.store(
-            key,
-            kind="script_beats",
-            response=raw,
-            model=str(llm.model),
-            provider=str(getattr(settings, "llm_provider", "")),
-        )
         note_prompt_cache(cache, ctx, "script_beats", False, key)
+        if getattr(response.choices[0], "finish_reason", None) == "length":
+            raise ValueError(
+                f"Phase 1: LLM output was truncated at max_tokens={scaled_max_tokens} "
+                f"while generating {target_count} beats. Reduce the target duration or "
+                "increase MN_RESEARCH_MAX_TOKENS within your model's output limit. "
+                "For reasoning models, disable thinking to leave room for JSON output."
+            )
     data = extract_json(raw)
     beats = data.get("beats", [])
 
@@ -390,6 +390,16 @@ def _generate_plot_beats(ctx: Context, settings, llm, target_count: int) -> List
     if len(cleaned) != target_count:
         raise ValueError(
             f"Phase 1: after filtering None/empty beats, expected {target_count}, got {len(cleaned)}"
+        )
+    # Cache only fully validated responses, never a clipped/invalid outline:
+    # otherwise every outer retry would replay the same broken JSON.
+    if cached is None:
+        cache.store(
+            key,
+            kind="script_beats",
+            response=raw,
+            model=str(llm.model),
+            provider=str(getattr(settings, "llm_provider", "")),
         )
     # Store beat metadata for match.py time anchoring
     ctx.metadata["beats_meta"] = beats_meta

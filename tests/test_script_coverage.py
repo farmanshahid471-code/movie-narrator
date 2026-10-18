@@ -468,3 +468,39 @@ def test_generate_script_retry_sleeps_between_attempts(tmp_path):
     assert result.metadata["script_source"] == "llm"
     assert len(result.segments) == 3
     slp.assert_called()
+
+def test_structured_beats_token_budget(tmp_path):
+    response = _resp(_beats_json([f"Beat {i}" for i in range(80)]))
+    llm = _llm_cm(response=response).__enter__.return_value
+    _generate_plot_beats(_make_ctx(tmp_path), _settings(), llm, 80)
+    assert llm.client.chat.completions.create.call_args.kwargs["max_tokens"] == 80 * 160
+
+
+def test_truncated_beats_not_cached(tmp_path):
+    response = _resp('```json\n{"beats": [{"text": "Cut off')
+    response.choices[0].finish_reason = "length"
+    llm = _llm_cm(response=response).__enter__.return_value
+    cache = MagicMock()
+    cache.lookup.return_value = None
+    with patch("movie_narrator.pipeline.script.get_prompt_cache", return_value=cache):
+        with pytest.raises(ValueError, match="output was truncated.*max_tokens="):
+            _generate_plot_beats(_make_ctx(tmp_path), _settings(), llm, 80)
+    cache.store.assert_not_called()
+
+
+def test_invalid_beats_retry_uses_fresh_response(tmp_path):
+    from movie_narrator.utils.prompt_cache import PromptCache
+
+    cache = PromptCache(cache_dir=tmp_path / "cache", enabled=True)
+    llm = _llm_cm(side_effect=[
+        _resp('```json\n{"beats": [{"text":'),
+        _resp(_beats_json(["Opening", "Ending"])),
+    ]).__enter__.return_value
+    ctx = _make_ctx(tmp_path)
+    settings = _settings()
+    with patch("movie_narrator.pipeline.script.get_prompt_cache", return_value=cache):
+        with pytest.raises(ValueError):
+            _generate_plot_beats(ctx, settings, llm, 2)
+        assert _generate_plot_beats(ctx, settings, llm, 2) == ["Opening", "Ending"]
+        assert _generate_plot_beats(ctx, settings, llm, 2) == ["Opening", "Ending"]
+    assert llm.client.chat.completions.create.call_count == 2
