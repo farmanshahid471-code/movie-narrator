@@ -24,7 +24,6 @@ from typing import List, Optional, Sequence
 
 from tqdm import tqdm
 
-from ..config import get_settings
 from ..models import Context, StepResult
 from ..utils.json_parser import extract_json
 from ..utils.llm import get_llm_client
@@ -123,7 +122,6 @@ def _call_llm_chunk(
         resp = llm.client.chat.completions.create(
             model=llm.model,
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=get_settings().translate_max_tokens,
         )
         # v0.7.0: Record LLM cost for translation
         if cost_tracker is not None and hasattr(resp, "usage") and resp.usage:

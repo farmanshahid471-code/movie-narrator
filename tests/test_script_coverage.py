@@ -469,11 +469,11 @@ def test_generate_script_retry_sleeps_between_attempts(tmp_path):
     assert len(result.segments) == 3
     slp.assert_called()
 
-def test_structured_beats_token_budget(tmp_path):
+def test_structured_beats_has_no_token_cap(tmp_path):
     response = _resp(_beats_json([f"Beat {i}" for i in range(80)]))
     llm = _llm_cm(response=response).__enter__.return_value
     _generate_plot_beats(_make_ctx(tmp_path), _settings(), llm, 80)
-    assert llm.client.chat.completions.create.call_args.kwargs["max_tokens"] == 80 * 160
+    assert "max_tokens" not in llm.client.chat.completions.create.call_args.kwargs
 
 
 def test_truncated_beats_not_cached(tmp_path):
@@ -483,7 +483,7 @@ def test_truncated_beats_not_cached(tmp_path):
     cache = MagicMock()
     cache.lookup.return_value = None
     with patch("movie_narrator.pipeline.script.get_prompt_cache", return_value=cache):
-        with pytest.raises(ValueError, match="output was truncated.*max_tokens="):
+        with pytest.raises(ValueError, match="output was truncated by the provider"):
             _generate_plot_beats(_make_ctx(tmp_path), _settings(), llm, 80)
     cache.store.assert_not_called()
 

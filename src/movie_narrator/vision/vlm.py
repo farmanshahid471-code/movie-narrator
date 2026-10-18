@@ -223,7 +223,6 @@ class VLMCaptioner(VisionCaptioner):
                     ],
                 }
             ],
-            "max_tokens": 80,
             "temperature": 0.3,
         }
 

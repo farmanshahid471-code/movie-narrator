@@ -269,10 +269,7 @@ def _generate_plot_beats(ctx: Context, settings, llm, target_count: int) -> List
         language_hint=build_language_hint(ctx.metadata.get("lang", "")),
     )
 
-    # Structured beats include text plus act, ratio, rhythm and emotion.
-    # The old 60-token estimate covered plain strings, not these objects,
-    # and clipped long-video outlines before their closing JSON brackets.
-    scaled_max_tokens = max(settings.research_max_tokens, target_count * 160)
+    # Omit output-token caps; the provider controls its own output limit.
 
     # v1.3.2: opt-in prompt cache around the raw Phase 1 completion.
     # ``target_count`` is folded into the key via ``extra`` — without it
@@ -285,7 +282,7 @@ def _generate_plot_beats(ctx: Context, settings, llm, target_count: int) -> List
         language=str(ctx.metadata.get("lang", "")),
         model=str(llm.model),
         provider=str(getattr(settings, "llm_provider", "")),
-        extra={"target_count": int(target_count), "structured_beats_version": 2},
+        extra={"target_count": int(target_count), "structured_beats_version": 3},
     )
     cached = cache.lookup(key)
     if cached is not None:
@@ -296,7 +293,6 @@ def _generate_plot_beats(ctx: Context, settings, llm, target_count: int) -> List
             model=llm.model,
             messages=[{"role": "user", "content": prompt}],
             temperature=settings.research_temperature,
-            max_tokens=scaled_max_tokens,
         )
         # v0.7.0: record LLM token usage for cost tracking
         if (
@@ -310,9 +306,9 @@ def _generate_plot_beats(ctx: Context, settings, llm, target_count: int) -> List
         note_prompt_cache(cache, ctx, "script_beats", False, key)
         if getattr(response.choices[0], "finish_reason", None) == "length":
             raise ValueError(
-                f"Phase 1: LLM output was truncated at max_tokens={scaled_max_tokens} "
+                "Phase 1: LLM output was truncated by the provider output/context limit "
                 f"while generating {target_count} beats. Reduce the target duration or "
-                "increase MN_RESEARCH_MAX_TOKENS within your model's output limit. "
+                "use a model/provider with a larger output limit. "
                 "For reasoning models, disable thinking to leave room for JSON output."
             )
     data = extract_json(raw)
@@ -480,7 +476,6 @@ def _expand_beats_to_script(
             model=llm.model,
             messages=[{"role": "user", "content": prompt}],
             temperature=settings.script_expand_temperature,
-            max_tokens=settings.script_max_tokens,
         )
         # v0.7.0: record LLM token usage for cost tracking
         if (
@@ -599,12 +594,11 @@ def judge_script(
 
     prompt = JUDGE_PROMPT.format(movie=movie_name, script=script_text)
 
-    # Low temperature + capped max_tokens for a fast, deterministic check.
+    # Low temperature for a deterministic check; no app-imposed token cap.
     response = llm.client.chat.completions.create(
         model=llm.model,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
-        max_tokens=320,
     )
     # v0.7.0: record LLM token usage for cost tracking
     if (

@@ -101,7 +101,6 @@ def _research_via_llm(ctx: Context, settings) -> ResearchInfo:
                     model=llm.model,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=settings.research_temperature,
-                    max_tokens=settings.research_max_tokens,
                 )
             # v0.7.0: Record LLM cost for research
             if ctx is not None and hasattr(ctx, "cost_tracker") and ctx.cost_tracker is not None:

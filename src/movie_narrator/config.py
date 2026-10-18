@@ -197,6 +197,8 @@ class Settings(BaseSettings):
     llm_extra_body: str = ""
     script_temperature: float = 0.7
     script_expand_temperature: float = 0.5
+    # Legacy token settings remain accepted for configuration compatibility.
+    # Generation requests no longer send these caps to the provider.
     script_max_tokens: int = 2048
     script_retries: int = 3
     script_retry_delay: float = 1.5
