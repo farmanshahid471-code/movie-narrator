@@ -28,7 +28,7 @@ set "DS_MODEL=deepseek-v4-pro"
 set "DS_VOICE=zh-CN-YunxiNeural"
 set "PYTHON_URL=https://www.python.org/ftp/python/3.12.15/python-3.12.15-amd64.exe"
 set "FFMPEG_URL=https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
-set "FFMPEG_URL2=https://www.johnvansickle.com/ffmpeg/releases/ffmpeg-release-win64-static.zip"
+set "FFMPEG_URL2=https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 set "WEBUI_PKG=movie-narrator-web==1.0.4"
 set "VENV=.venv"
 
@@ -241,30 +241,59 @@ echo.
 goto :eof
 
 :get_ffmpeg
-if exist "tools\ffmpeg\bin\ffprobe.exe" goto ffmpeg_ok
+REM Prefer a complete local install, then an existing system install.
+if exist "tools\ffmpeg\bin\ffmpeg.exe" if exist "tools\ffmpeg\bin\ffprobe.exe" goto ffmpeg_ok
+where ffmpeg.exe >nul 2>&1
+if errorlevel 1 goto ffmpeg_download
+where ffprobe.exe >nul 2>&1
+if errorlevel 1 goto ffmpeg_download
+goto ffmpeg_system
+
+:ffmpeg_download
 echo [*] Downloading a static ffmpeg + ffprobe build...
 if not exist "tools" mkdir "tools"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%FFMPEG_URL%' -OutFile 'tools\ffmpeg.zip' -UseBasicParsing"
-if errorlevel 1 echo [!] Primary download failed - trying the mirror...
-if errorlevel 1 powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%FFMPEG_URL2%' -OutFile 'tools\ffmpeg.zip' -UseBasicParsing"
-if errorlevel 1 set "FAIL_STEP=downloading ffmpeg"
-if errorlevel 1 goto fail
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; try { Invoke-WebRequest -Uri '%FFMPEG_URL%' -OutFile 'tools\ffmpeg.zip' -UseBasicParsing } catch { Write-Warning $_; exit 1 }"
+if not errorlevel 1 goto ffmpeg_extract
+echo [!] GitHub download failed - trying the independent Gyan Windows build...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; try { Invoke-WebRequest -Uri '%FFMPEG_URL2%' -OutFile 'tools\ffmpeg.zip' -UseBasicParsing } catch { Write-Warning $_; exit 1 }"
+if errorlevel 1 goto ffmpeg_help
+
+:ffmpeg_extract
 echo [*] Extracting ffmpeg...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -LiteralPath 'tools\ffmpeg.zip' -DestinationPath 'tools\ffmpeg-raw' -Force"
-if errorlevel 1 set "FAIL_STEP=extracting ffmpeg"
-if errorlevel 1 goto fail
-if not exist "tools\ffmpeg" mkdir "tools\ffmpeg"
-for /f "delims=" %%D in ('dir /b /ad "tools\ffmpeg-raw" 2^>nul') do if exist "tools\ffmpeg-raw\%%D\bin\ffmpeg.exe" move /y "tools\ffmpeg-raw\%%D\bin" "tools\ffmpeg\bin" >nul
-if not exist "tools\ffmpeg\bin\ffmpeg.exe" set "FAIL_STEP=extracting ffmpeg, bin folder not found"
-if not exist "tools\ffmpeg\bin\ffmpeg.exe" goto fail
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; try { if (Test-Path 'tools\ffmpeg-raw') { Remove-Item 'tools\ffmpeg-raw' -Recurse -Force }; Expand-Archive -LiteralPath 'tools\ffmpeg.zip' -DestinationPath 'tools\ffmpeg-raw' -Force; $bin = Get-ChildItem 'tools\ffmpeg-raw' -Filter ffmpeg.exe -Recurse | Where-Object { Test-Path (Join-Path $_.DirectoryName 'ffprobe.exe') } | Select-Object -First 1; if (-not $bin) { throw 'Archive must contain both ffmpeg.exe and ffprobe.exe' }; New-Item -ItemType Directory -Path 'tools\ffmpeg\bin' -Force | Out-Null; Copy-Item (Join-Path $bin.DirectoryName '*') 'tools\ffmpeg\bin' -Force } catch { Write-Warning $_; exit 1 }"
+if errorlevel 1 goto ffmpeg_help
 del /q "tools\ffmpeg.zip" >nul 2>&1
 rmdir /s /q "tools\ffmpeg-raw" >nul 2>&1
 :ffmpeg_ok
 set "PATH=%CD%\tools\ffmpeg\bin;%PATH%"
 set "MN_FFMPEG_BIN=%CD%\tools\ffmpeg\bin\ffmpeg.exe"
-echo [OK] ffmpeg ready.
+goto ffmpeg_verify
+
+:ffmpeg_system
+REM Resolve the existing executable for engine integrations that use this setting.
+for /f "delims=" %%I in ('where ffmpeg.exe') do if not defined MN_FFMPEG_BIN set "MN_FFMPEG_BIN=%%I"
+:ffmpeg_verify
+ffmpeg.exe -version >nul 2>&1
+if errorlevel 1 goto ffmpeg_help
+ffprobe.exe -version >nul 2>&1
+if errorlevel 1 goto ffmpeg_help
+echo [OK] ffmpeg and ffprobe ready.
 echo.
 goto :eof
+
+:ffmpeg_help
+echo.
+echo [!] FFmpeg could not be downloaded, extracted, or run.
+echo     If release-assets.githubusercontent.com cannot be resolved, this is a DNS/network issue.
+echo     Download a Windows ZIP from https://www.gyan.dev/ffmpeg/builds/ in your browser
+echo     or on another computer, then extract its bin folder so these files exist:
+echo       %CD%\tools\ffmpeg\bin\ffmpeg.exe
+echo       %CD%\tools\ffmpeg\bin\ffprobe.exe
+echo     Alternatively install both commands on PATH, then open a new terminal.
+echo     Run run.bat again; no Python reinstall is needed.
+set "FAIL_STEP=setting up ffmpeg"
+goto fail
+
 
 :ensure_font
 if exist "assets\fonts\NotoSansSC-Regular.otf" goto font_ok
