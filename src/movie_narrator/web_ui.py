@@ -6,6 +6,7 @@ Pipeline failures remain failures; heartbeats report waiting, not fake progress.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import logging
 import threading
 import time
@@ -191,6 +192,57 @@ def create_app():
     @app.get(f"/assets/{bundles[0].name}")
     async def bundle():
         return Response(javascript, media_type="text/javascript", headers={"Cache-Control": "no-store"})
+
+    # The modified bundle retains the upstream filename. Give it a content
+    # revision so a browser cannot reuse a pre-patch cached copy of that file.
+    revision = hashlib.sha256(javascript.encode("utf-8")).hexdigest()[:16]
+    html = (static / "index.html").read_text(encoding="utf-8")
+    html = html.replace(
+        f'/assets/{bundles[0].name}', f'/assets/{bundles[0].name}?v={revision}'
+    )
+    bootstrap = """<script>
+(function(){
+ let failure=null;
+ function show(message){
+  failure=message;
+  const root=document.getElementById('root');
+  if(!root||root.querySelector('[data-ui-error]'))return;
+  const box=document.createElement('section');box.dataset.uiError='true';
+  box.style.cssText='margin:40px auto;max-width:760px;padding:24px;color:#e2e8f0;background:#172033;font:16px/1.6 system-ui;white-space:pre-wrap';
+  const title=document.createElement('h2');title.textContent='Movie Narrator could not load the interface';
+  const detail=document.createElement('p');detail.textContent=message;
+  const help=document.createElement('p');help.textContent='Restart run.bat, then press Ctrl+F5. If this persists, copy the message below and the browser Console error. The backend may still be healthy.';
+  const reload=document.createElement('button');reload.textContent='Reload interface';reload.onclick=()=>location.reload();
+  box.append(title,detail,help,reload);root.replaceChildren(box);
+ }
+ window.addEventListener('error',event=>{
+  if(event.target && event.target.tagName==='SCRIPT')show('JavaScript asset failed to load: '+event.target.src);
+  else if(event.message)show(event.message);
+ },true);
+ window.addEventListener('unhandledrejection',event=>show(String(event.reason?.message||event.reason||'Unknown JavaScript error')));
+ document.addEventListener('DOMContentLoaded',()=>{
+  if(failure)show(failure);
+  setTimeout(()=>{
+   const root=document.getElementById('root');
+   if(root && (!root.childElementCount||root.querySelector('[data-ui-loading]')))
+    show('The frontend did not start within 12 seconds. Check the browser Console and Network tabs for a blocked or failed JavaScript module.');
+  },12000);
+ });
+})();
+</script>"""
+    html = html.replace('<script type="module"', bootstrap + '<script type="module"', 1)
+    html = html.replace(
+        '<div id="root"></div>',
+        '<div id="root"><p data-ui-loading style="padding:32px;color:#e2e8f0">Loading Movie Narrator…</p></div>',
+    )
+
+    @app.get("/", include_in_schema=False)
+    async def index():
+        return Response(html, media_type="text/html", headers={"Cache-Control": "no-store"})
+
+    @app.get("/index.html", include_in_schema=False)
+    async def index_file():
+        return await index()
 
     app.mount("/", StaticFiles(directory=str(static), html=True), name="static")
     return app

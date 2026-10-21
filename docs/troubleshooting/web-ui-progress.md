@@ -56,3 +56,33 @@ The tests submit real HTTP task requests, execute the background worker with
 mocked pipeline calls (no paid APIs), and verify both REST-only completion/error
 reporting and WebSocket terminal delivery. A live LLM/FFmpeg/TTS run still depends
 on local credentials, network access, source media and binaries.
+
+## Blank dark page before submitting a task
+
+A successful `GET /` or `/api/health` does not prove React loaded. A missing
+`favicon.ico` is harmless. Look for failed JavaScript requests in the browser
+Network tab and exceptions in Console (F12).
+
+The launcher now serves the HTML with `Cache-Control: no-store` and a
+content-versioned script URL (`index-....js?v=...`). This prevents a previously
+cached upstream file from masking a modified bundle with the same filename.
+A bootstrap error handler is installed before the module loads; module-load
+errors, uncaught exceptions and a 12-second empty-root watchdog show a readable
+error with a reload button instead of leaving an empty dark page. Error text
+is assigned with `textContent`, not inserted as HTML.
+
+After updating `src`, restart the server and press Ctrl+F5. If it still fails,
+copy the new visible error and the first red Console error. Browser extensions,
+blocked scripts and browser-specific compatibility issues need those details;
+server access logs alone cannot distinguish them.
+
+The optional Node DOM-runtime smoke test actually evaluates the served React
+bundle and checks for mounted task inputs and the generation button, then
+injects an error to verify readable, safely escaped crash reporting:
+
+```sh
+npm install --prefix tools/web-ui-test jsdom
+NODE_PATH=tools/web-ui-test/node_modules node scripts/check_web_ui_dom.cjs http://127.0.0.1:8760
+```
+
+This is a DOM emulator test, not a full browser integration test.

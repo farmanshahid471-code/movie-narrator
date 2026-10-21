@@ -110,3 +110,19 @@ def test_repeat_submit_is_not_silently_queued(client):
         finally:
             release.set()
         assert wait_terminal(client, first.json()["task_id"])["status"] == "done"
+
+
+def test_index_uses_versioned_bundle_and_visible_startup_errors(client):
+    import re
+
+    page = client.get("/")
+    assert page.status_code == 200
+    assert page.headers["cache-control"] == "no-store"
+    src = re.search(r'src="(/assets/index-[^"]+\.js\?v=[a-f0-9]{16})"', page.text)
+    assert src is not None
+    assert client.get(src.group(1)).status_code == 200
+    assert page.text.index("window.addEventListener('error'") < page.text.index('<script type="module"')
+    assert "data-ui-loading" in page.text
+    assert "could not load the interface" in page.text
+    assert "textContent=message" in page.text  # errors must not be interpolated as HTML
+    assert client.get("/index.html").text == page.text
