@@ -116,7 +116,7 @@ if not exist "%VENV%\Scripts\mn-web.exe" pause
 if not exist "%VENV%\Scripts\mn-web.exe" goto menu
 cls
 echo [*] Starting the Web UI on http://localhost:8760 ...
-start "Movie Narrator Web UI" "%VENV%\Scripts\mn-web.exe" --host 127.0.0.1 --port 8760
+start "Movie Narrator Web UI" "%PY%" -m movie_narrator.web_ui --host 127.0.0.1 --port 8760
 timeout /t 3 /nobreak >nul
 start "" http://localhost:8760
 echo.
