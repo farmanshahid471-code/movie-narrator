@@ -470,9 +470,9 @@ def test_generate_script_retry_sleeps_between_attempts(tmp_path):
     slp.assert_called()
 
 def test_structured_beats_has_no_token_cap(tmp_path):
-    response = _resp(_beats_json([f"Beat {i}" for i in range(80)]))
+    response = _resp(_beats_json([f"Beat {i}" for i in range(24)]))
     llm = _llm_cm(response=response).__enter__.return_value
-    _generate_plot_beats(_make_ctx(tmp_path), _settings(), llm, 80)
+    _generate_plot_beats(_make_ctx(tmp_path), _settings(), llm, 24)
     assert "max_tokens" not in llm.client.chat.completions.create.call_args.kwargs
 
 
@@ -504,3 +504,102 @@ def test_invalid_beats_retry_uses_fresh_response(tmp_path):
         assert _generate_plot_beats(ctx, settings, llm, 2) == ["Opening", "Ending"]
         assert _generate_plot_beats(ctx, settings, llm, 2) == ["Opening", "Ending"]
     assert llm.client.chat.completions.create.call_count == 2
+
+
+def test_168_beats_and_expansion_use_ordered_batches_without_token_caps(tmp_path):
+    import re
+    from movie_narrator.utils.prompt_cache import PromptCache
+
+    ctx = _make_ctx(tmp_path, duration=1260)
+    settings = _settings()
+    prompts = []
+
+    def completion(**kwargs):
+        assert "max_tokens" not in kwargs
+        prompt = kwargs["messages"][0]["content"]
+        prompts.append(prompt)
+        match = re.search(r"(?:global beats|global beats) (\d+)-(\d+)", prompt)
+        assert match, "Every long-script request must identify its global slice"
+        start, end = map(int, match.groups())
+        assert end - start + 1 <= 24
+        if "Extract EXACTLY" in prompt:
+            return _resp(_beats_json([
+                {"text": f"Plot event {i}", "approx_ratio": i / 168, "act": 1}
+                for i in range(start, end + 1)
+            ]))
+        return _resp(_segments_json([f"Line {i}" for i in range(start, end + 1)]))
+
+    llm = _llm_cm(side_effect=completion).__enter__.return_value
+    cache = PromptCache(cache_dir=tmp_path / "cache", enabled=True)
+    with patch("movie_narrator.pipeline.script.get_prompt_cache", return_value=cache):
+        beats = _generate_plot_beats(ctx, settings, llm, 168)
+        segments = _expand_beats_to_script(ctx, settings, llm, beats, 168)
+        assert _generate_plot_beats(ctx, settings, llm, 168) == beats
+        assert _expand_beats_to_script(ctx, settings, llm, beats, 168) == segments
+    assert len(prompts) == 14  # seven outline and seven expansion requests
+    assert beats == [f"Plot event {i}" for i in range(1, 169)]
+    assert [s.text for s in segments] == [f"Line {i}" for i in range(1, 169)]
+    assert len(ctx.metadata["beats_meta"]) == 168
+    assert ctx.metadata["beats_meta"][-1]["approx_ratio"] == 1.0
+    assert ctx.duration == 1260
+    assert "Plot event 24" in prompts[1]  # previous-batch continuity supplied
+
+
+def test_outline_truncation_splits_only_failed_slice(tmp_path):
+    ctx = _make_ctx(tmp_path)
+    clipped = _resp('{"beats": [')
+    clipped.choices[0].finish_reason = "length"
+    llm = _llm_cm(side_effect=[
+        clipped,
+        _resp(_beats_json([f"First {i}" for i in range(12)])),
+        _resp(_beats_json([f"Second {i}" for i in range(12)])),
+        _resp(_beats_json(["Last"])),
+    ]).__enter__.return_value
+    beats = _generate_plot_beats(ctx, _settings(), llm, 25)
+    assert len(beats) == len(ctx.metadata["beats_meta"]) == 25
+    calls = llm.client.chat.completions.create.call_args_list
+    assert "global beats 1-12" in calls[1].kwargs["messages"][0]["content"]
+    assert "global beats 13-24" in calls[2].kwargs["messages"][0]["content"]
+    assert "First 11" in calls[2].kwargs["messages"][0]["content"]
+    assert beats[-1] == "Last"
+
+
+def test_expansion_truncation_splits_failed_slice(tmp_path):
+    clipped = _resp('{"segments": [')
+    clipped.choices[0].finish_reason = "length"
+    llm = _llm_cm(side_effect=[
+        clipped,
+        _resp(_segments_json([f"First {i}" for i in range(12)])),
+        _resp(_segments_json([f"Second {i}" for i in range(12)])),
+        _resp(_segments_json(["Last"])),
+    ]).__enter__.return_value
+    result = _expand_beats_to_script(
+        _make_ctx(tmp_path), _settings(), llm, [f"beat{i}" for i in range(25)], 25
+    )
+    assert len(result) == 25
+    assert result[-1].text == "Last"
+    assert llm.client.chat.completions.create.call_count == 4
+
+
+def test_failed_outline_batch_restores_original_metadata(tmp_path):
+    ctx = _make_ctx(tmp_path)
+    ctx.metadata["beats_meta"] = [{"text": "previous run"}]
+    llm = _llm_cm(side_effect=[
+        _resp(_beats_json([f"b{i}" for i in range(24)])),
+        _resp('{"beats": []}'),
+    ]).__enter__.return_value
+    with pytest.raises(ValueError, match="zero beats"):
+        _generate_plot_beats(ctx, _settings(), llm, 25)
+    assert ctx.metadata["beats_meta"] == [{"text": "previous run"}]
+
+
+def test_invalid_expansion_batch_is_not_cached(tmp_path):
+    cache = MagicMock()
+    cache.lookup.return_value = None
+    llm = _llm_cm(response=_resp(_segments_json(["Too few"]))).__enter__.return_value
+    with patch("movie_narrator.pipeline.script.get_prompt_cache", return_value=cache):
+        with pytest.raises(ValueError, match="expected 24 segments, got 1"):
+            _expand_beats_to_script(
+                _make_ctx(tmp_path), _settings(), llm, [f"beat{i}" for i in range(25)], 25
+            )
+    cache.store.assert_not_called()

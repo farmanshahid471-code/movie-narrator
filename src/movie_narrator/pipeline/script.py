@@ -222,7 +222,64 @@ def _build_reference_media_hints(ctx: Context) -> str:
     )
 
 
+# Request size, not a token or total-duration limit. Long scripts use more calls.
+_SCRIPT_BATCH_SIZE = 24
+
+
+class _ScriptOutputTruncated(ValueError):
+    """The provider explicitly reported finish_reason=length."""
+
+
 def _generate_plot_beats(ctx: Context, settings, llm, target_count: int) -> List[str]:
+    """Build a full outline in ordered slices, shrinking on provider truncation."""
+    combined: list[str] = []
+    metadata: list[dict] = []
+    previous_meta = ctx.metadata.get("beats_meta")
+
+    def generate(start: int, end: int):
+        hint = ""
+        if target_count > _SCRIPT_BATCH_SIZE or end - start != target_count:
+            hint = (
+                f"\nBATCH INSTRUCTIONS (override whole-story coverage above): This is a "
+                f"{target_count}-beat outline. Return ONLY global beats {start + 1}-{end}. "
+                f"Cover only the {start / target_count:.1%}-{end / target_count:.1%} portion "
+                "of the story in chronological order, not a new summary of the whole movie. "
+                "Use global story positions for approx_ratio and act. Do not repeat earlier "
+                "beats. Include named set pieces only if they belong in this slice. "
+                "Only the first batch opens the story; only the last ends it.\n"
+                + "Previous beats for continuity: " + repr(combined[-8:])
+            )
+        ctx.services.console.warn(f"Outline: requesting beats {start + 1}-{end} of {target_count}")
+        try:
+            beats = _generate_plot_beats_batch(ctx, settings, llm, end - start, hint)
+        except _ScriptOutputTruncated:
+            if end - start <= 1:
+                raise
+            ctx.services.console.warn("Provider truncated outline batch; retrying smaller slices")
+            middle = (start + end) // 2
+            generate(start, middle)
+            generate(middle, end)
+            return
+        combined.extend(beats)
+        metadata.extend(ctx.metadata.get("beats_meta", []))
+        ctx.services.console.warn(f"Outline: completed {len(combined)} of {target_count} beats")
+
+    try:
+        for start in range(0, target_count, _SCRIPT_BATCH_SIZE):
+            generate(start, min(start + _SCRIPT_BATCH_SIZE, target_count))
+    except Exception:
+        if previous_meta is None:
+            ctx.metadata.pop("beats_meta", None)
+        else:
+            ctx.metadata["beats_meta"] = previous_meta
+        raise
+    ctx.metadata["beats_meta"] = metadata
+    return combined
+
+
+def _generate_plot_beats_batch(
+    ctx: Context, settings, llm, target_count: int, batch_hint: str = ""
+) -> List[str]:
     """Phase 1: Extract exactly *target_count* plot beats from the movie.
 
     Uses low temperature (research_temperature) for structured extraction.
@@ -269,6 +326,8 @@ def _generate_plot_beats(ctx: Context, settings, llm, target_count: int) -> List
         language_hint=build_language_hint(ctx.metadata.get("lang", "")),
     )
 
+    prompt += batch_hint
+
     # Omit output-token caps; the provider controls its own output limit.
 
     # v1.3.2: opt-in prompt cache around the raw Phase 1 completion.
@@ -282,7 +341,7 @@ def _generate_plot_beats(ctx: Context, settings, llm, target_count: int) -> List
         language=str(ctx.metadata.get("lang", "")),
         model=str(llm.model),
         provider=str(getattr(settings, "llm_provider", "")),
-        extra={"target_count": int(target_count), "structured_beats_version": 3},
+        extra={"target_count": int(target_count), "structured_beats_version": 4, "batch_hint": batch_hint},
     )
     cached = cache.lookup(key)
     if cached is not None:
@@ -305,7 +364,7 @@ def _generate_plot_beats(ctx: Context, settings, llm, target_count: int) -> List
         raw = response.choices[0].message.content or ""
         note_prompt_cache(cache, ctx, "script_beats", False, key)
         if getattr(response.choices[0], "finish_reason", None) == "length":
-            raise ValueError(
+            raise _ScriptOutputTruncated(
                 "Phase 1: LLM output was truncated by the provider output/context limit "
                 f"while generating {target_count} beats. Reduce the target duration or "
                 "use a model/provider with a larger output limit. "
@@ -406,12 +465,52 @@ def _generate_plot_beats(ctx: Context, settings, llm, target_count: int) -> List
 
 
 def _expand_beats_to_script(
+    ctx: Context, settings, llm, beats: List[str], target_count: int,
+    prev_judge_scores: dict | None = None,
+) -> List[ScriptSegment]:
+    """Expand bounded slices so long outlines do not become one huge response."""
+    if len(beats) <= _SCRIPT_BATCH_SIZE:
+        return _expand_beats_to_script_batch(ctx, settings, llm, beats, target_count, prev_judge_scores)
+    segments: list[ScriptSegment] = []
+
+    def expand(start: int, end: int):
+        hint = (
+            f"\nBATCH INSTRUCTIONS: Expand ONLY global beats {start + 1}-{end} of {len(beats)}. "
+            "Exactly one segment per supplied beat, in order. This batch is part of the "
+            "full video, not a complete recap on its own. Do not add a new hook or ending "
+            "unless this batch includes the first or last global beat respectively.\n"
+            + "Previous context (do not expand): " + repr(beats[max(0, start - 3):start])
+            + "\nFollowing context (do not expand): " + repr(beats[end:end + 3])
+        )
+        ctx.services.console.warn(f"Narration: requesting segments {start + 1}-{end} of {len(beats)}")
+        try:
+            batch = _expand_beats_to_script_batch(
+                ctx, settings, llm, beats[start:end], end - start, prev_judge_scores, hint
+            )
+        except _ScriptOutputTruncated:
+            if end - start <= 1:
+                raise
+            ctx.services.console.warn("Provider truncated narration batch; retrying smaller slices")
+            middle = (start + end) // 2
+            expand(start, middle)
+            expand(middle, end)
+            return
+        segments.extend(batch)
+        ctx.services.console.warn(f"Narration: completed {len(segments)} of {len(beats)} segments")
+
+    for start in range(0, len(beats), _SCRIPT_BATCH_SIZE):
+        expand(start, min(start + _SCRIPT_BATCH_SIZE, len(beats)))
+    return segments
+
+
+def _expand_beats_to_script_batch(
     ctx: Context,
     settings,
     llm,
     beats: List[str],
     target_count: int,
     prev_judge_scores: dict | None = None,
+    batch_hint: str = "",
 ) -> List[ScriptSegment]:
     """Phase 2: Expand each beat into exactly one narration segment.
 
@@ -454,6 +553,8 @@ def _expand_beats_to_script(
         judge_feedback=build_judge_feedback_hint(prev_judge_scores),
     )
 
+    prompt += batch_hint
+
     # v1.3.2: opt-in prompt cache around the raw Phase 2 completion.
     # The phase-1 ``beats`` are folded into the key via ``extra`` so a
     # cached expansion is only reused for identical actual inputs.
@@ -465,7 +566,7 @@ def _expand_beats_to_script(
         language=str(ctx.metadata.get("lang", "")),
         model=str(llm.model),
         provider=str(getattr(settings, "llm_provider", "")),
-        extra={"beats": [str(b) for b in beats]},
+        extra={"beats": [str(b) for b in beats], "batch_hint": batch_hint, "version": 2},
     )
     cached = cache.lookup(key)
     if cached is not None:
@@ -486,14 +587,9 @@ def _expand_beats_to_script(
         ):
             ctx.cost_tracker.record_llm_call("script", llm.model, response.usage.model_dump())
         raw = response.choices[0].message.content or ""
-        cache.store(
-            key,
-            kind="script_expand",
-            response=raw,
-            model=str(llm.model),
-            provider=str(getattr(settings, "llm_provider", "")),
-        )
         note_prompt_cache(cache, ctx, "script_expand", False, key)
+        if getattr(response.choices[0], "finish_reason", None) == "length":
+            raise _ScriptOutputTruncated("Phase 2: provider truncated narration output")
     data = extract_json(raw)
     raw_segments = data.get("segments", [])
 
@@ -535,6 +631,13 @@ def _expand_beats_to_script(
     if not segments:
         raise ValueError("Phase 2: LLM returned zero segments")
 
+    if batch_hint and len(segments) != target_count:
+        raise ValueError(f"Phase 2 batch: expected {target_count} segments, got {len(segments)}")
+    if cached is None:
+        cache.store(
+            key, kind="script_expand", response=raw, model=str(llm.model),
+            provider=str(getattr(settings, "llm_provider", "")),
+        )
     return segments
 
 
@@ -997,10 +1100,16 @@ def generate_script(ctx: Context) -> Context:
                 # ProviderError) so existing callers/tests that match on
                 # RuntimeError continue to work; the runner reads the flag
                 # via getattr(error, "retryable", False).
+                guidance = (
+                    "The provider could not return valid structured output. Check model output "
+                    "capabilities and reasoning settings; this is not evidence of a bad API key."
+                    if isinstance(e, ValueError)
+                    else "Check your LLM configuration (MN_LLM_BASE_URL, MN_LLM_API_KEY, "
+                    "MN_LLM_MODEL) and network connectivity."
+                )
                 wrapped = RuntimeError(
                     f"LLM script generation failed after {settings.script_retries} attempts: {e}. "
-                    f"Check your LLM configuration (MN_LLM_BASE_URL, MN_LLM_API_KEY, MN_LLM_MODEL) "
-                    f"and network connectivity."
+                    + guidance
                 )
                 setattr(wrapped, "retryable", is_network_error(e))
                 raise wrapped from e

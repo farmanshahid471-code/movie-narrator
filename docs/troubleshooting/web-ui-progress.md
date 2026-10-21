@@ -86,3 +86,28 @@ NODE_PATH=tools/web-ui-test/node_modules node scripts/check_web_ui_dom.cjs http:
 ```
 
 This is a DOM emulator test, not a full browser integration test.
+
+## Provider truncates a long outline (for example 168 beats)
+
+`finish_reason=length` is an explicit provider-side truncation signal, not a
+WebSocket or authentication error. Omitting `max_tokens` uses the provider's
+output defaults; it does not make the model unlimited.
+
+Long-script generation now requests at most 24 beats at a time, then expands
+narration in similarly sized batches. Each request identifies its global beat
+range and supplies continuity context. Outline metadata is combined in order.
+If the provider explicitly truncates a batch, that range is divided in half
+and retried, down to a single item. A single-item truncation still fails with
+an actionable error rather than accepting an incomplete script. This is a
+request-size strategy, not a limit on video duration, beat count, or tokens.
+
+For 168 beats, the normal path uses seven outline requests and seven expansion
+requests, followed by the existing quality checks. Logs show requested ranges
+and completed counts. More requests may take additional time and incur provider
+costs. Provider limits and network/rate-limit errors can still cause failure.
+Validated batches can be reused when the existing opt-in prompt cache is enabled;
+truncated or invalid expansion responses are not cached.
+
+To install, stop the server, replace `src` from the updated ZIP, restart
+`run.bat`, and submit the failed task again. The failed in-memory task itself
+is not resumed. Keep `.env`, `.venv`, source media, tools, and output files.

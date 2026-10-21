@@ -5,6 +5,7 @@ retry/fail behavior, research context injection, CI mock fallback,
 and preset tag propagation.
 """
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -74,7 +75,6 @@ def _beats_json(n: int) -> str:
 def _segments_json(texts: list) -> str:
     """Build a valid Phase 2 response with segments."""
     segs = [{"text": t} for t in texts]
-    import json
 
     return json.dumps({"segments": segs}, ensure_ascii=False)
 
@@ -564,7 +564,6 @@ def test_phase1_filters_none_beats(tmp_path):
     """None entries in beats list should be filtered, not converted to "None"."""
     ctx = _make_ctx(tmp_path)
     # LLM returns [None, "point1", "point2"] — None should be dropped
-    import json
 
     bad_resp = _mock_llm_response(json.dumps({"beats": [None, "point1", "point2"]}))
     mock_cm = _mock_llm_cm(response=bad_resp)
@@ -578,7 +577,6 @@ def test_phase1_filters_none_beats(tmp_path):
 def test_phase1_filters_string_none_beats(tmp_path):
     """The string "None" should also be filtered (case-insensitive)."""
     ctx = _make_ctx(tmp_path)
-    import json
 
     bad_resp = _mock_llm_response(json.dumps({"beats": ["none", "point1", "point2"]}))
     mock_cm = _mock_llm_cm(response=bad_resp)
@@ -592,7 +590,6 @@ def test_phase1_filters_string_none_beats(tmp_path):
 def test_phase1_accepts_integer_beats(tmp_path):
     """Integer beats should be converted to strings (not dropped)."""
     ctx = _make_ctx(tmp_path)
-    import json
 
     resp = _mock_llm_response(json.dumps({"beats": [1, 2, 3]}))
     mock_cm = _mock_llm_cm(response=resp)
@@ -645,7 +642,6 @@ def test_phase2_all_empty_raises(tmp_path):
 # generate_script 产出的 segment 数量严格等于 preset 目标.
 
 
-import json
 
 
 _PRESET_TARGETS = [
@@ -856,9 +852,19 @@ def test_dynamic_sentence_count_by_duration(preset_name, duration, expected_coun
     ctx.metadata["prompt_target_sentences"] = preset.param_dict.get("prompt_target_sentences")
     ctx.metadata["prompt_target_segment_duration"] = seg_dur
 
-    beats_resp = _mock_llm_response(_beats_json(expected_count))
-    seg_resp = _mock_llm_response(_segments_json([f"s{i}" for i in range(expected_count)]))
-    mock_cm = _mock_llm_cm(side_effect=[beats_resp, seg_resp])
+    from movie_narrator.pipeline.script import _SCRIPT_BATCH_SIZE
+
+    beat_responses = []
+    segment_responses = []
+    for start in range(0, expected_count, _SCRIPT_BATCH_SIZE):
+        end = min(start + _SCRIPT_BATCH_SIZE, expected_count)
+        beat_responses.append(_mock_llm_response(json.dumps(
+            {"beats": [f"剧情关键点{i + 1}" for i in range(start, end)]}, ensure_ascii=False
+        )))
+        segment_responses.append(_mock_llm_response(
+            _segments_json([f"s{i}" for i in range(start, end)])
+        ))
+    mock_cm = _mock_llm_cm(side_effect=beat_responses + segment_responses)
 
     with patch("movie_narrator.pipeline.script.get_settings", return_value=_mock_settings()):
         with patch("movie_narrator.pipeline.script.get_llm_client", return_value=mock_cm):
